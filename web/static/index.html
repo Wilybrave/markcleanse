@@ -1,0 +1,1477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>markcleanse — content provenance forensics</title>
+<style>
+/* ===================================================================
+   Design tokens
+   =================================================================== */
+:root{
+  --bg:#f7f8fa;
+  --surface:#ffffff;
+  --surface-2:#f2f4f7;
+  --surface-3:#e9edf2;
+  --ink:#0d1117;
+  --ink-2:#3d4654;
+  --muted:#6b7480;
+  --faint:#98a1ad;
+  --line:#e3e8ee;
+  --line-2:#d3dae3;
+
+  --accent:#4f46e5;
+  --accent-soft:#eef2ff;
+
+  --forged:#b42573;   --forged-bg:#fdf2f8;
+  --gen:#c02626;      --gen-bg:#fef2f2;
+  --decl:#b45309;     --decl-bg:#fffbeb;
+  --mark:#7c3aed;     --mark-bg:#f5f3ff;
+  --susp:#a16207;     --susp-bg:#fefce8;
+  --capt:#0369a1;     --capt-bg:#f0f9ff;
+  --ok:#047857;       --ok-bg:#ecfdf5;
+
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,
+         "Helvetica Neue",Arial,sans-serif;
+
+  --r-sm:7px; --r:11px; --r-lg:15px;
+  --shadow-1:0 1px 2px rgba(13,17,23,.05), 0 1px 3px rgba(13,17,23,.04);
+  --shadow-2:0 2px 4px rgba(13,17,23,.05), 0 8px 20px -6px rgba(13,17,23,.10);
+  --shadow-3:0 10px 34px -10px rgba(13,17,23,.22);
+}
+/* Dark palette, reachable two ways: the OS setting (unless light was
+   explicitly chosen) and the in-page toggle. Same tokens either way. */
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0a0c10;
+    --surface:#12151b;
+    --surface-2:#181c24;
+    --surface-3:#1f242e;
+    --ink:#f0f3f7;
+    --ink-2:#c3cad5;
+    --muted:#8b94a2;
+    --faint:#6a737f;
+    --line:#232833;
+    --line-2:#2f3541;
+
+    --accent:#818cf8;
+    --accent-soft:#1c1f36;
+
+    --forged:#f472b6;   --forged-bg:#2a1122;
+    --gen:#f87171;      --gen-bg:#2a1414;
+    --decl:#fbbf24;     --decl-bg:#291f0d;
+    --mark:#c4b5fd;     --mark-bg:#1e1a33;
+    --susp:#facc15;     --susp-bg:#26210b;
+    --capt:#7dd3fc;     --capt-bg:#0c1f2c;
+    --ok:#34d399;       --ok-bg:#0b2320;
+
+    --shadow-1:0 1px 2px rgba(0,0,0,.4);
+    --shadow-2:0 2px 6px rgba(0,0,0,.4), 0 12px 28px -10px rgba(0,0,0,.6);
+    --shadow-3:0 16px 44px -12px rgba(0,0,0,.75);
+  }
+}
+:root[data-theme="dark"]{
+    --bg:#0a0c10;
+    --surface:#12151b;
+    --surface-2:#181c24;
+    --surface-3:#1f242e;
+    --ink:#f0f3f7;
+    --ink-2:#c3cad5;
+    --muted:#8b94a2;
+    --faint:#6a737f;
+    --line:#232833;
+    --line-2:#2f3541;
+
+    --accent:#818cf8;
+    --accent-soft:#1c1f36;
+
+    --forged:#f472b6;   --forged-bg:#2a1122;
+    --gen:#f87171;      --gen-bg:#2a1414;
+    --decl:#fbbf24;     --decl-bg:#291f0d;
+    --mark:#c4b5fd;     --mark-bg:#1e1a33;
+    --susp:#facc15;     --susp-bg:#26210b;
+    --capt:#7dd3fc;     --capt-bg:#0c1f2c;
+    --ok:#34d399;       --ok-bg:#0b2320;
+
+    --shadow-1:0 1px 2px rgba(0,0,0,.4);
+    --shadow-2:0 2px 6px rgba(0,0,0,.4), 0 12px 28px -10px rgba(0,0,0,.6);
+    --shadow-3:0 16px 44px -12px rgba(0,0,0,.75);
+}
+
+*{box-sizing:border-box}
+html{color-scheme:light dark;-webkit-font-smoothing:antialiased;
+     -moz-osx-font-smoothing:grayscale}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 var(--sans);
+     letter-spacing:-.006em}
+::selection{background:color-mix(in srgb,var(--accent) 26%,transparent)}
+svg{display:block}
+button,input{font-family:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px 100px}
+
+/* ===================================================================
+   Masthead
+   =================================================================== */
+.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);
+     backdrop-filter:saturate(1.6) blur(14px);border-bottom:1px solid var(--line)}
+.top-in{max-width:1120px;margin:0 auto;padding:14px 24px;display:flex;
+        align-items:center;gap:13px}
+.logo{width:32px;height:32px;border-radius:9px;flex:0 0 auto;display:grid;
+      place-items:center;color:#fff;
+      background:linear-gradient(145deg,var(--accent),color-mix(in srgb,var(--accent) 55%,#8b5cf6));
+      box-shadow:var(--shadow-1)}
+.brand{display:flex;flex-direction:column;line-height:1.15}
+.brand b{font-size:15.5px;font-weight:680;letter-spacing:-.02em}
+.brand span{font-size:11.5px;color:var(--muted);letter-spacing:.005em}
+.nav{display:flex;gap:3px;margin-left:14px;background:var(--surface-2);padding:3px;
+     border-radius:9px;border:1px solid var(--line)}
+.tab{padding:6px 13px;border-radius:7px;background:transparent;color:var(--muted);
+     font-size:13px;font-weight:600;border:none}
+.tab:hover{color:var(--ink-2);filter:none}
+.tab.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-1)}
+
+.env{margin-left:auto;font:11px var(--mono);color:var(--faint);
+     background:var(--surface-2);padding:5px 10px;border-radius:999px;
+     border:1px solid var(--line)}
+
+.theme-btn{margin-left:8px;padding:7px 9px;border-radius:9px}
+.theme-btn svg{display:block}
+
+/* ===================================================================
+   Hero / dropzone
+   =================================================================== */
+.hero{padding:38px 0 6px}
+h1{font-size:29px;line-height:1.18;font-weight:700;letter-spacing:-.032em;margin:0 0 8px}
+.lede{color:var(--muted);font-size:15px;max-width:60ch;margin:0}
+
+#drop{margin-top:22px;position:relative;border:1.5px dashed var(--line-2);
+      border-radius:var(--r-lg);padding:40px 24px;text-align:center;cursor:pointer;
+      background:var(--surface);box-shadow:var(--shadow-1);
+      transition:border-color .18s,box-shadow .18s,transform .18s,background .18s}
+#drop:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--line-2));
+            box-shadow:var(--shadow-2)}
+#drop.hot{border-color:var(--accent);background:var(--accent-soft);
+          box-shadow:var(--shadow-3);transform:translateY(-1px)}
+#drop .ico{width:42px;height:42px;margin:0 auto 12px;border-radius:12px;
+           display:grid;place-items:center;background:var(--surface-2);
+           color:var(--accent);border:1px solid var(--line)}
+#drop strong{display:block;font-size:16px;font-weight:620;letter-spacing:-.015em}
+#drop .hint{display:block;margin-top:5px;font-size:13px;color:var(--muted)}
+
+/* ===================================================================
+   Panels & controls
+   =================================================================== */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);
+       box-shadow:var(--shadow-1);margin-top:16px}
+.panel-pad{padding:16px 18px}
+.label{font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.02em;
+       text-transform:uppercase;margin-bottom:9px}
+
+.row{display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+.field{flex:1 1 300px;position:relative;display:flex;align-items:center}
+.field svg{position:absolute;left:11px;color:var(--faint);pointer-events:none}
+input[type=text],input[type=search]{width:100%;padding:10px 12px 10px 34px;
+  border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--bg);
+  color:var(--ink);font:13px var(--mono);transition:border-color .15s,box-shadow .15s}
+input:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
+input::placeholder{color:var(--faint)}
+
+button{display:inline-flex;align-items:center;gap:7px;padding:10px 15px;border-radius:var(--r-sm);
+  border:1px solid transparent;background:var(--accent);color:#fff;font-size:13px;
+  font-weight:600;cursor:pointer;letter-spacing:-.005em;
+  transition:filter .15s,transform .1s,background .15s,border-color .15s}
+button:hover{filter:brightness(1.07)}
+button:active{transform:translateY(1px)}
+button.ghost{background:var(--surface-2);color:var(--ink-2);border-color:var(--line-2)}
+button.ghost:hover{background:var(--surface-3);filter:none}
+
+.bar{height:2px;background:var(--line);border-radius:2px;overflow:hidden;
+     margin:14px -18px -16px;display:none}
+.bar.on{display:block}
+.bar i{display:block;height:100%;width:32%;
+       background:linear-gradient(90deg,transparent,var(--accent),transparent);
+       animation:slide 1.15s ease-in-out infinite}
+@keyframes slide{from{margin-left:-32%}to{margin-left:100%}}
+
+/* ===================================================================
+   Text page
+   =================================================================== */
+#ta{width:100%;min-height:260px;resize:vertical;padding:14px 16px;
+    border:1px solid var(--line-2);border-radius:var(--r);background:var(--bg);
+    color:var(--ink);font:14px/1.7 var(--sans);letter-spacing:-.004em}
+#ta:focus{outline:none;border-color:var(--accent);
+          box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
+.counts{font:12px var(--mono);color:var(--faint)}
+
+.gauge{display:flex;gap:22px;align-items:center;padding:20px 18px;flex-wrap:wrap}
+.dial{--v:0;width:104px;height:104px;border-radius:50%;flex:0 0 auto;
+      background:conic-gradient(var(--dial) calc(var(--v)*1%),var(--surface-3) 0);
+      display:grid;place-items:center;position:relative}
+.dial::after{content:'';position:absolute;inset:9px;border-radius:50%;
+             background:var(--surface)}
+.dial b{position:relative;z-index:1;font-size:25px;font-weight:700;
+        letter-spacing:-.03em;line-height:1}
+.dial b i{font-style:normal;font-size:13px;color:var(--muted);font-weight:600}
+.gauge-say{flex:1 1 320px;min-width:0}
+.gauge-say h3{margin:0 0 4px;font-size:17px;letter-spacing:-.02em}
+.gauge-say p{margin:0;font-size:13.5px;color:var(--ink-2);line-height:1.55}
+.band-strong{--dial:var(--gen)} .band-moderate{--dial:var(--susp)}
+.band-weak{--dial:var(--capt)} .band-none{--dial:var(--ok)}
+
+.notprob{margin:0 18px 18px;padding:11px 13px;border-radius:var(--r-sm);
+         background:var(--susp-bg);border:1px solid color-mix(in srgb,var(--susp) 30%,transparent);
+         color:var(--ink-2);font-size:12.5px;line-height:1.55}
+.notprob b{color:var(--susp)}
+
+.marked{padding:16px 18px;font:14px/1.85 var(--sans);white-space:pre-wrap;
+        word-break:break-word;border-top:1px solid var(--line);max-height:420px;
+        overflow:auto}
+.marked mark{background:color-mix(in srgb,var(--susp) 26%,transparent);
+             color:inherit;border-radius:3px;padding:1px 2px;
+             border-bottom:1.5px solid var(--susp);cursor:help}
+.marked mark.leakage{background:color-mix(in srgb,var(--gen) 24%,transparent);
+                     border-bottom-color:var(--gen)}
+.marked mark.hidden{background:var(--mark);color:#fff;border-bottom-color:var(--mark)}
+.feat{display:flex;justify-content:space-between;gap:12px;padding:7px 18px;
+      border-top:1px solid var(--line);font-size:13px}
+.feat span:last-child{font:12px var(--mono);color:var(--muted);white-space:nowrap}
+
+/* ===================================================================
+   Summary
+   =================================================================== */
+.headline{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;
+          padding:18px 18px 2px}
+.headline .big{font-size:26px;font-weight:700;letter-spacing:-.03em}
+.headline .cap{color:var(--muted);font-size:14px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;padding:14px 18px 18px}
+.chip{display:inline-flex;align-items:center;gap:8px;padding:6px 12px 6px 9px;
+      border-radius:999px;border:1px solid var(--line-2);background:var(--surface-2);
+      cursor:pointer;font-size:12.5px;font-weight:550;color:var(--ink-2);
+      user-select:none;transition:border-color .15s,background .15s,transform .1s}
+.chip:hover{transform:translateY(-1px)}
+.chip .dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:0 0 auto}
+.chip .n{font-variant-numeric:tabular-nums;font-weight:700}
+.chip.on{border-color:currentColor;background:var(--tintbg,var(--surface-3))}
+
+/* verdict colour carriers */
+.k-PROVENANCE-FORGED{color:var(--forged);--tintbg:var(--forged-bg)}
+.k-AI-GENERATED{color:var(--gen);--tintbg:var(--gen-bg)}
+.k-AI-DECLARED{color:var(--decl);--tintbg:var(--decl-bg)}
+.k-WATERMARK{color:var(--mark);--tintbg:var(--mark-bg)}
+.k-SUSPECT{color:var(--susp);--tintbg:var(--susp-bg)}
+.k-SIGNED-CAPTURE{color:var(--capt);--tintbg:var(--capt-bg)}
+.k-NO-EVIDENCE{color:var(--ok);--tintbg:var(--ok-bg)}
+.k-UNSUPPORTED,.k-ERROR{color:var(--muted);--tintbg:var(--surface-3)}
+
+/* ===================================================================
+   Result rows
+   =================================================================== */
+.rows{padding:6px 0 8px}
+.file{border-top:1px solid var(--line);transition:background .15s}
+.file:first-child{border-top:0}
+.file:hover{background:var(--surface-2)}
+.file.open{background:var(--surface-2)}
+.file.hide{display:none}
+
+.fhead{display:flex;align-items:center;gap:12px;padding:13px 18px;cursor:pointer}
+.caret{color:var(--faint);flex:0 0 auto;transition:transform .16s ease}
+.file.open .caret{transform:rotate(90deg)}
+.fmain{flex:1 1 260px;min-width:0}
+.name{font:13px/1.4 var(--mono);word-break:break-all;font-weight:500}
+.sub{margin-top:3px;font-size:12.5px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap}
+.sub .who{color:var(--ink-2);font-weight:550}
+.meta{font:11px var(--mono);color:var(--faint);white-space:nowrap;flex:0 0 auto}
+
+.badge{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;
+       font-size:11px;font-weight:700;letter-spacing:.03em;white-space:nowrap;flex:0 0 auto;
+       background:var(--tintbg);border:1px solid color-mix(in srgb,currentColor 32%,transparent)}
+.tier{font:700 10px var(--mono);border-radius:5px;padding:2px 6px;flex:0 0 auto;
+      background:var(--tintbg);border:1px solid color-mix(in srgb,currentColor 30%,transparent)}
+.t-A{color:var(--gen);--tintbg:var(--gen-bg)}
+.t-B{color:var(--decl);--tintbg:var(--decl-bg)}
+.t-U{color:var(--mark);--tintbg:var(--mark-bg)}
+.t-C{color:var(--susp);--tintbg:var(--susp-bg)}
+
+.basis{margin:0 18px 12px 42px;font-size:13.5px;color:var(--ink-2);line-height:1.5}
+
+/* ===================================================================
+   Evidence
+   =================================================================== */
+.evidence{display:none;margin:0 18px 16px 42px}
+.file.open .evidence{display:block;animation:fade .18s ease}
+@keyframes fade{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+
+.finding{border:1px solid var(--line);border-radius:var(--r);background:var(--surface);
+         padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow-1)}
+.finding.integrity{border-color:color-mix(in srgb,var(--forged) 42%,var(--line));
+                   background:var(--forged-bg)}
+.fh{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.fsig{font:10.5px var(--mono);color:var(--faint);letter-spacing:.01em}
+.fsum{margin-top:6px;font-size:13.5px;line-height:1.55;color:var(--ink)}
+.finding.integrity .fsum{color:var(--forged);font-weight:600}
+
+/* verification checklist */
+.verify{margin-top:11px;border:1px solid var(--line);border-radius:var(--r);
+        overflow:hidden;background:var(--surface-2)}
+.verify-h{padding:8px 12px;border-bottom:1px solid var(--line);display:flex;
+          justify-content:space-between;gap:10px;flex-wrap:wrap;
+          font-size:11.5px;color:var(--muted)}
+.verify-h b{color:var(--ink-2);font-weight:600}
+.verify-h .alg{font:10.5px var(--mono);color:var(--faint)}
+.check{display:flex;gap:10px;padding:8px 12px;align-items:flex-start;
+       border-top:1px solid var(--line);font-size:13px;background:var(--surface)}
+.check:first-of-type{border-top:0}
+.ck{width:17px;height:17px;border-radius:50%;flex:0 0 auto;display:grid;place-items:center;
+    margin-top:1px;color:#fff}
+.ck.pass{background:var(--ok)} .ck.fail{background:var(--gen)}
+.ck.warn{background:var(--susp)} .ck.skip{background:var(--faint)}
+.check .k{flex:0 0 96px;color:var(--muted);font-size:12px;font-weight:550}
+.check .v{flex:1 1 160px;min-width:0;color:var(--ink-2);word-break:break-word}
+.check .v em{font-style:normal;color:var(--ink);font-weight:600}
+
+.kv{margin:11px 0 0;display:grid;grid-template-columns:auto 1fr;gap:5px 14px;
+    font-size:12.5px;align-items:baseline}
+.kv dt{font:10.5px var(--mono);color:var(--faint);white-space:nowrap;text-transform:uppercase;
+       letter-spacing:.04em}
+.kv dd{margin:0;word-break:break-word;color:var(--ink-2)}
+.payload{font:12px/1.6 var(--mono);background:var(--surface-2);border:1px solid var(--line);
+         border-radius:var(--r-sm);padding:9px 11px;margin-top:5px;white-space:pre-wrap;
+         word-break:break-word;max-height:230px;overflow:auto;color:var(--ink-2)}
+details.raw{margin-top:11px}
+details.raw summary{font:10.5px var(--mono);color:var(--faint);cursor:pointer;
+                    text-transform:uppercase;letter-spacing:.05em}
+details.raw summary:hover{color:var(--muted)}
+details.raw pre{font:11.5px/1.55 var(--mono);background:var(--surface-2);
+  border:1px solid var(--line);border-radius:var(--r-sm);padding:11px;overflow:auto;
+  margin:8px 0 0;white-space:pre-wrap;word-break:break-word;color:var(--ink-2)}
+
+.empty{color:var(--muted);font-size:13.5px;text-align:center;padding:34px 18px}
+
+/* ===================================================================
+   Docs & catalogue
+   =================================================================== */
+.kinds{display:flex;gap:7px;flex-wrap:wrap}
+.kind{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:999px;
+      border:1px solid var(--line-2);background:var(--surface-2);cursor:pointer;
+      font-size:12.5px;font-weight:550;color:var(--ink-2);user-select:none;
+      transition:border-color .15s,background .15s,transform .1s}
+.kind:hover{transform:translateY(-1px)}
+.kind.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.kind .n{font-variant-numeric:tabular-nums;opacity:.65;font-weight:700}
+.kind.on .n{opacity:.85}
+.cat.hide,.ds.hide{display:none}
+
+.cat{margin-top:22px}
+.cat-h{display:flex;align-items:baseline;gap:10px;margin:0 0 10px 2px}
+.cat-h h2{font-size:16px;font-weight:660;letter-spacing:-.02em;margin:0}
+.cat-h span{font-size:12px;color:var(--faint);font-family:var(--mono)}
+.cat-h button{margin-left:auto;padding:6px 11px;font-size:12px}
+
+.samples{display:grid;gap:10px}
+.ds{border:1px solid var(--line);border-radius:var(--r);background:var(--surface);
+    box-shadow:var(--shadow-1);overflow:hidden;transition:box-shadow .15s,border-color .15s}
+.ds:hover{box-shadow:var(--shadow-2)}
+.ds.ran{border-color:color-mix(in srgb,var(--accent) 34%,var(--line))}
+.ds-head{display:flex;align-items:center;gap:11px;padding:12px 14px;flex-wrap:wrap}
+.ds-name{font:12.5px var(--mono);font-weight:550;flex:1 1 200px;word-break:break-all}
+.ds-body{padding:0 14px 13px;font-size:13.5px;color:var(--ink-2);line-height:1.55}
+.ds-sig{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+.ds-sig code{font-size:10.5px;color:var(--faint)}
+.ds-out{border-top:1px solid var(--line);background:var(--surface-2);padding:13px 14px;
+        display:none;animation:fade .18s ease}
+.ds.ran .ds-out{display:block}
+.ds-verdict{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:9px}
+.ds-verdict .ok-note{font-size:12px;color:var(--ok);font-weight:600}
+.ds-verdict .bad-note{font-size:12px;color:var(--gen);font-weight:600}
+.spin{width:13px;height:13px;border:2px solid color-mix(in srgb,currentColor 30%,transparent);
+      border-top-color:currentColor;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.clean-btn{padding:6px 11px;font-size:12px}
+.clean-out{margin:0 18px 14px 42px;border:1px solid var(--line);border-radius:var(--r);
+           background:var(--surface-2);padding:12px 14px;display:none;animation:fade .18s ease}
+.clean-out.on{display:block}
+.clean-out h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;
+              color:var(--muted);font-weight:650}
+.rm{display:flex;gap:9px;align-items:baseline;font-size:13px;margin-bottom:5px;color:var(--ink-2)}
+.rm .minus{color:var(--gen);font-weight:800;flex:0 0 auto}
+.kept{display:flex;gap:9px;align-items:baseline;font-size:13px;margin-bottom:5px;color:var(--ink-2)}
+.kept .dot2{color:var(--susp);font-weight:800;flex:0 0 auto}
+.warn-box{margin-top:10px;border-radius:var(--r-sm);padding:9px 11px;font-size:12.5px;
+          background:var(--susp-bg);border:1px solid color-mix(in srgb,var(--susp) 30%,transparent);
+          color:var(--ink-2)}
+.opts{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:10px;
+      font-size:12.5px;color:var(--muted)}
+.opts label{display:inline-flex;gap:6px;align-items:center;cursor:pointer}
+
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+        color:var(--muted);font-weight:650;padding:0 12px 8px 0;
+        border-bottom:1px solid var(--line)}
+.tbl td{padding:10px 12px 10px 0;border-bottom:1px solid var(--line);
+        vertical-align:top;color:var(--ink-2)}
+.tbl tr:last-child td{border-bottom:0}
+.tbl b{color:var(--ink)}
+
+/* ===================================================================
+   Footer
+   =================================================================== */
+footer{margin-top:34px;font-size:13px;color:var(--muted);line-height:1.65}
+footer h3{font-size:12px;font-weight:650;color:var(--ink-2);margin:22px 0 10px;
+          text-transform:uppercase;letter-spacing:.06em}
+.tierlist{display:grid;gap:9px}
+.tierrow{display:flex;gap:11px;align-items:flex-start}
+.tierrow .tier{margin-top:1px}
+.callout{margin-top:16px;border-radius:var(--r);padding:13px 15px;
+         background:var(--susp-bg);border:1px solid color-mix(in srgb,var(--susp) 30%,transparent);
+         color:var(--ink-2)}
+.callout b{color:var(--ink)}
+code{font:11.5px var(--mono);background:var(--surface-2);padding:1px 5px;
+     border-radius:4px;border:1px solid var(--line)}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round">
+    <circle cx="12" cy="12" r="4"/>
+    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2
+             M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>
+  </symbol>
+  <symbol id="i-auto" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="9"/>
+    <path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"
+          stroke="none"/>
+  </symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3l7 3v5.5c0 4.4-2.9 8.4-7 9.5-4.1-1.1-7-5.1-7-9.5V6z"/>
+    <path d="M9.2 11.8l2 2 3.6-3.8"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 15V4"/><path d="M8 8l4-4 4 4"/>
+    <path d="M4 15v3a2 2 0 002 2h12a2 2 0 002-2v-3"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/>
+    <path d="M16 16l4 4"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 5l7 7-7 7"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12.5l4.5 4.5L19 7"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="3.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-bang" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="3.2" stroke-linecap="round"><path d="M12 5v9"/><path d="M12 18.5v.5"/></symbol>
+  <symbol id="i-dash" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="3.2" stroke-linecap="round"><path d="M6 12h12"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="9" y="9" width="11" height="11" rx="2"/>
+    <path d="M5 15V6a2 2 0 012-2h9"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 10l4 4 4-4"/><path d="M4 5h16"/><path d="M4 19h16"/></symbol>
+</defs></svg>
+
+<div class="top"><div class="top-in">
+  <span class="logo"><svg width="18" height="18"><use href="#i-shield"/></svg></span>
+  <span class="brand"><b>markcleanse</b><span>content provenance forensics</span></span>
+  <nav class="nav" id="nav">
+    <button class="tab on" data-view="scan">Scan</button>
+    <button class="tab" data-view="text">Text</button>
+    <button class="tab" data-view="docs">Docs &amp; examples</button>
+  </nav>
+  <span class="env" id="env">…</span>
+  <button class="ghost theme-btn" id="theme" title="Theme: system"><svg width="15" height="15"><use href="#i-auto"/></svg></button>
+</div></div>
+
+<div class="wrap">
+
+<div id="view-scan">
+<section class="hero">
+  <h1>Is this file what it claims to be?</h1>
+  <p class="lede">Verifies Content Credentials cryptographically, decodes hidden payloads,
+     and names the generator where the file admits one — with every claim tied to how
+     strong the evidence actually is.</p>
+
+  <div id="drop">
+    <span class="ico"><svg width="21" height="21"><use href="#i-upload"/></svg></span>
+    <strong>Drop files or a folder here</strong>
+    <span class="hint">or click to choose · nothing leaves this machine · uploads are scanned in memory</span>
+  </div>
+</section>
+
+<div class="panel panel-pad">
+  <div class="label">Scan a path on this machine</div>
+  <div class="row">
+    <span class="field">
+      <svg width="15" height="15"><use href="#i-folder"/></svg>
+      <input type="text" id="path" placeholder="/path/to/client-assets" spellcheck="false">
+    </span>
+    <button id="scanPath">Scan folder</button>
+    <button class="ghost" id="clear">Clear</button>
+  </div>
+  <div class="bar" id="bar"><i></i></div>
+</div>
+
+<div class="panel" id="summary" style="display:none"></div>
+
+<div class="panel panel-pad" id="toolbar" style="display:none">
+  <div class="row">
+    <span class="field">
+      <svg width="15" height="15"><use href="#i-search"/></svg>
+      <input type="search" id="filter" placeholder="Filter by filename, generator or signal…">
+    </span>
+    <button class="ghost" id="expandAll">
+      <svg width="14" height="14"><use href="#i-expand"/></svg>Expand all</button>
+    <button class="ghost" id="copyJson">
+      <svg width="14" height="14"><use href="#i-copy"/></svg>Copy JSON</button>
+    <button class="ghost" id="report">
+      <svg width="14" height="14"><use href="#i-copy"/></svg>Report</button>
+    <button class="ghost" id="cleanAll" style="display:none"></button>
+  </div>
+  <div class="row" id="cleanAllOpts" style="display:none;margin-top:10px">
+    <label class="opts" style="margin:0"><input type="checkbox" id="all-prov">
+      also remove C2PA provenance</label>
+    <label class="opts" style="margin:0"><input type="checkbox" id="all-repl">
+      replace originals (keeps a <code>.bak</code>)</label>
+    <span style="font-size:12px;color:var(--faint)">
+      Only files with removable markers are touched, and only the ones currently visible
+      under the filter.</span>
+  </div>
+</div>
+
+<div class="panel" id="results" style="display:none"></div>
+</div><!-- /view-scan -->
+
+<div id="view-text" hidden>
+  <section class="hero">
+    <h1>Check pasted text</h1>
+    <p class="lede">Same engine as a dropped file. Two very different questions get
+       answered here: <b>is something hidden in these characters</b> — which is
+       evidence — and <b>does this read like an LLM wrote it</b>, which is not.</p>
+  </section>
+
+  <div class="panel panel-pad">
+    <textarea id="ta" spellcheck="false" placeholder="Paste text here…"></textarea>
+    <div class="row" style="margin-top:12px">
+      <button id="scanText">Analyse text</button>
+      <button class="ghost" id="cleanText">Cleanse it</button>
+      <label class="opts" style="margin:0"><input type="checkbox" id="txt-ws" checked>
+        also normalise suspicious whitespace</label>
+      <span class="counts" id="taCount" style="margin-left:auto"></span>
+    </div>
+    <div class="bar" id="tbar"><i></i></div>
+  </div>
+
+  <div id="textOut"></div>
+</div>
+
+<div id="view-docs" hidden>
+  <section class="hero">
+    <h1>What it detects — and what it can't</h1>
+    <p class="lede">Every example below is a real file shipped with the app. Press
+       <b>Run</b> to scan it and see exactly what the tool says, with the full evidence.</p>
+  </section>
+
+  <div class="panel panel-pad">
+    <div class="label">Evidence tiers</div>
+    <div class="tierlist" id="tierlist"></div>
+  </div>
+
+  <div class="panel panel-pad" style="margin-top:18px">
+    <div class="label">Filter examples</div>
+    <div class="kinds" id="kinds"></div>
+    <div class="row" style="margin-top:12px">
+      <span class="field">
+        <svg width="15" height="15"><use href="#i-search"/></svg>
+        <input type="search" id="docFilter" placeholder="Filter by filename, signal or description…">
+      </span>
+      <button id="runAll">Run visible</button>
+      <button class="ghost" id="resetDocs">Reset</button>
+    </div>
+    <div style="margin-top:9px;font-size:12.5px;color:var(--muted)" id="runStat"></div>
+  </div>
+
+  <div id="catalogue"></div>
+
+  <div class="panel panel-pad" style="margin-top:26px">
+    <div class="label">Not detectable by anyone without the vendor</div>
+    <table class="tbl">
+      <thead><tr><th>Watermark</th><th>Where</th><th>Why we cannot read it</th></tr></thead>
+      <tbody>
+        <tr><td><b>Google SynthID</b></td><td>Gemini, Imagen, Veo</td>
+            <td>Invisible pixel-space signal, decodable only with Google's key. The
+            detector portal is waitlisted and there is <b>no public specification</b>.</td></tr>
+        <tr><td><b>Claude text watermark</b></td><td>Claude output from 2 Aug 2026</td>
+            <td>SynthID-Text biases word choice using a private key — <b>no character is
+            inserted and no artefact lands in the file</b>. Anthropic's detection API is
+            announced but not yet released.</td></tr>
+        <tr><td><b>Gemini text</b></td><td>Gemini output</td>
+            <td>SynthID-Text, same structure, Google's key.</td></tr>
+        <tr><td><b>Meta Stable Signature</b></td><td>Meta AI images</td>
+            <td>No public detector; independent work finds watermarks of this class
+            brittle under re-encoding.</td></tr>
+      </tbody>
+    </table>
+    <p style="margin:14px 0 0;font-size:13px;color:var(--muted)">When metadata indicates
+      one of these origins, the file is reported as tier <span class="tier t-U">U</span> —
+      <em>origin indicated, watermark unchecked</em> — rather than pretending to have read
+      anything.</p>
+  </div>
+
+  <div class="panel panel-pad" style="margin-top:16px">
+    <div class="label">Approaches deliberately not used</div>
+    <p style="margin:0;font-size:13.5px;color:var(--ink-2)">Other “AI image detectors”
+      classify the <b>pixels</b> — error-level analysis, noise/PRNU residuals, frequency
+      artefacts, or a CNN trained on GAN fingerprints. None of that is here, on purpose.
+      Those produce a probability whose error rate shifts with every model release, they
+      are defeated by resizing and re-compression, and they cannot tell you <em>which</em>
+      tool made the file. This reports evidence you can point at in an argument instead.</p>
+    <p style="margin:12px 0 0;font-size:13.5px;color:var(--ink-2)">The same applies to
+      text: a perplexity-based classifier such as Binoculars is far stronger than the
+      stylometry here (&gt;90% detection at 0.01% false positives, versus roughly
+      <b>28% at 0.8%</b> measured on our own corpus) — but it needs two local LLMs and a
+      GPU. The stylometry in this tool is triage, not evidence.</p>
+  </div>
+
+  <div class="panel panel-pad" style="margin-top:16px">
+    <div class="label">Not implemented</div>
+    <ul style="margin:0;padding-left:18px;font-size:13.5px;color:var(--ink-2)">
+      <li><b>Video frames</b> — container-level C2PA in MP4 is verified; picture content is not examined.</li>
+      <li><b>Audio</b> — not examined.</li>
+      <li><b>CRL revocation</b> — OCSP is implemented (stapled by default, live opt-in).</li>
+      <li><b>RFC 3161 timestamps</b> are shown but their signatures are not validated.</li>
+      <li><code>c2pa.hash.collection</code> bindings. <code>hash.data</code>,
+          <code>hash.bmff</code> v1–v3 and <code>hash.boxes</code> are all implemented.</li>
+      <li>Encrypted PDFs are not decrypted; nested containers are followed one level deep.</li>
+    </ul>
+  </div>
+</div><!-- /view-docs -->
+
+<footer>
+  <h3>What this cannot do</h3>
+  <p>It cannot read Google SynthID, Meta's watermark, or the statistical <b>text</b>
+  watermarks now carried by Claude and Gemini output (SynthID-Text, driven by EU AI Act
+  Article 50, in force 2&nbsp;August&nbsp;2026). Those bias word choice using a private key
+  rather than inserting anything into the file — there is nothing local to find, and
+  verification requires the vendor's own detection API.</p>
+
+  <div class="callout"><b>Absence of evidence is not evidence of human authorship.</b>
+  A screenshot, a re-save or a metadata strip removes every signal above while changing
+  nothing a viewer can see. A clean result means “no markers survived”, never “a human
+  made this”.</div>
+</footer>
+
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const drop=$('drop'), results=$('results'), summary=$('summary'),
+      toolbar=$('toolbar'), bar=$('bar');
+const reports = [];
+const uploaded = new Map();   // name -> File, so a scanned upload can be cleaned
+let expanded = false;
+
+const ORDER = ['PROVENANCE-FORGED','AI-GENERATED','AI-DECLARED','WATERMARK?','SUSPECT',
+               'SIGNED-CAPTURE','NO-EVIDENCE','UNSUPPORTED','ERROR'];
+const ATTENTION = new Set(['PROVENANCE-FORGED','AI-GENERATED','AI-DECLARED','WATERMARK?']);
+const active = new Set();
+
+const icon = (id, size) => `<svg width="${size}" height="${size}"><use href="#i-${id}"/></svg>`;
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const kclass = v => 'k-' + (v === 'WATERMARK?' ? 'WATERMARK' : v);
+const bytes = n => n > 1048576 ? (n/1048576).toFixed(1)+' MB'
+                 : n > 1024 ? Math.round(n/1024)+' KB' : (n||0)+' B';
+
+/* ---------- input ---------------------------------------------------- */
+const picker = document.createElement('input');
+picker.type='file'; picker.multiple=true; picker.style.display='none';
+document.body.appendChild(picker);
+drop.onclick = () => picker.click();
+picker.onchange = () => handle([...picker.files]);
+
+['dragenter','dragover'].forEach(e => drop.addEventListener(e, ev => {
+  ev.preventDefault(); drop.classList.add('hot');
+}));
+['dragleave','drop'].forEach(e => drop.addEventListener(e, ev => {
+  ev.preventDefault(); drop.classList.remove('hot');
+}));
+drop.addEventListener('drop', async ev => {
+  const items = ev.dataTransfer.items;
+  if (items && items.length && items[0].webkitGetAsEntry){
+    const files = [];
+    await Promise.all([...items].map(i => walk(i.webkitGetAsEntry(), files)));
+    if (files.length) return handle(files);
+  }
+  handle([...ev.dataTransfer.files]);
+});
+
+/* Recurse into dropped folders — vetting a deliverable means dropping a folder,
+   and dataTransfer.files is empty for directories. */
+function walk(entry, out, depth = 0){
+  return new Promise(resolve => {
+    if (!entry || depth > 6) return resolve();
+    if (entry.isFile) return entry.file(f => { out.push(f); resolve(); }, resolve);
+    const reader = entry.createReader();
+    const batch = () => reader.readEntries(async es => {
+      if (!es.length) return resolve();
+      await Promise.all(es.map(e => walk(e, out, depth + 1)));
+      batch();
+    }, resolve);
+    batch();
+  });
+}
+
+$('clear').onclick = () => { reports.length=0; active.clear(); render(); };
+$('expandAll').onclick = () => {
+  expanded = !expanded;
+  $('expandAll').innerHTML = icon('expand',14) + (expanded ? 'Collapse all' : 'Expand all');
+  document.querySelectorAll('.file').forEach(f => f.classList.toggle('open', expanded));
+};
+$('copyJson').onclick = async () => {
+  try { await navigator.clipboard.writeText(JSON.stringify(reports, null, 2)); }
+  catch { return alert('Clipboard blocked by the browser.'); }
+  $('copyJson').innerHTML = icon('check',14) + 'Copied';
+  setTimeout(() => $('copyJson').innerHTML = icon('copy',14) + 'Copy JSON', 1500);
+};
+$('filter').oninput = applyFilter;
+
+/* ---------- bulk clean (the folder case) ----------------------------- */
+/* Runs the per-file path one file at a time. Sequential on purpose: this
+   writes to disk, and a folder of a few hundred files should not fire a few
+   hundred concurrent writes at the box. */
+function cleanTargets(){
+  const prov = $('all-prov').checked;
+  const out = [];
+  reports.forEach((r, i) => {
+    const el = document.getElementById('f' + i);
+    if (el && !el.classList.contains('hide') && removable(r, prov)) out.push(i);
+  });
+  return out;
+}
+
+function syncCleanAll(){
+  const n = cleanTargets().length;
+  const btn = $('cleanAll'), opts = $('cleanAllOpts');
+  btn.style.display = opts.style.display = n ? '' : 'none';
+  /* Always rewrite the label, even when hiding: a hidden button still holds
+     its old text, and "Cleanse 29 files" left behind after everything was
+     cleaned is exactly the wrong thing to flash on the next render. */
+  btn.innerHTML = n ? icon('shield',14) + `Cleanse ${n} file${n === 1 ? '' : 's'}` : '';
+}
+
+$('all-prov').onchange = syncCleanAll;   // the target count depends on it
+
+$('cleanAll').onclick = async () => {
+  const targets = cleanTargets();
+  if (!targets.length) return;
+  const cats = ['hidden','privacy','generator'];
+  if ($('all-prov').checked) cats.push('provenance');
+  const replace = $('all-repl').checked;
+  if (replace && !confirm(
+      `Overwrite ${targets.length} original file(s) in place?\n\n` +
+      `A .bak copy of each is kept next to it.`)) return;
+
+  const btn = $('cleanAll');
+  btn.disabled = true;
+  let done = 0, changed = 0, failed = 0;
+  for (const i of targets){
+    btn.innerHTML = `Cleansing ${++done}/${targets.length}…`;
+    const res = await cleanFile(i, {cats, replace});
+    if (!res || res.error) failed++; else if (res.changed) changed++;
+  }
+  btn.disabled = false;
+  syncCleanAll();
+  alert(`${changed} of ${targets.length} file(s) cleaned` +
+        (failed ? `, ${failed} failed` : '') +
+        `.\n\nOpen each row to see what was removed and what survived — ` +
+        `stylometry and pixel-embedded payloads cannot be stripped.`);
+};
+$('path').addEventListener('keydown', e => { if (e.key === 'Enter') $('scanPath').click(); });
+
+$('scanPath').onclick = async () => {
+  const path = $('path').value.trim();
+  if (!path) return;
+  bar.classList.add('on');
+  try{
+    const res = await fetch('/api/scan-path', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({path})});
+    const data = await res.json();
+    if (data.error) return alert(data.error);
+    reports.push(...data.files);
+    render();
+  } finally { bar.classList.remove('on'); }
+};
+
+async function handle(files){
+  if (!files.length) return;
+  bar.classList.add('on');
+  try{
+    for (const file of files){
+      const res = await fetch('/api/scan', {method:'POST',
+        headers:{'X-Filename': encodeURIComponent(file.name).replace(/%20/g,' ')},
+        body:file});
+      const report = await res.json();
+      if (report.error){ console.error(file.name, report.error); continue; }
+      uploaded.set(report.name || file.name, file);
+      reports.push(report);
+      render();
+    }
+  } finally { bar.classList.remove('on'); }
+}
+
+/* ---------- C2PA checklist ------------------------------------------- */
+const CHECKS = [
+  ['signature','Signature',    {valid:'pass', invalid:'fail'}],
+  ['binding','Bound to file',  {matched:'pass', mismatched:'fail',
+                                absent:'warn', unsupported:'skip'}],
+  ['assertions','Assertions',  {matched:'pass', mismatched:'fail'}],
+  ['chain','Certificate chain',{verified:'pass', broken:'fail', incomplete:'warn'}],
+  ['trust','Signer trust',     {trusted:'pass', 'untrusted-root':'fail',
+                                'no-trust-list':'warn'}],
+];
+const MARK = {pass:'check', fail:'x', warn:'bang', skip:'dash'};
+const mark = kind => `<span class="ck ${kind}">${icon(MARK[kind], 11)}</span>`;
+const row = (kind, key, value, extra) =>
+  `<div class="check">${mark(kind)}<span class="k">${esc(key)}</span>
+     <span class="v"><em>${esc(value)}</em>${extra ? ' — ' + esc(extra) : ''}</span></div>`;
+
+function verifyBlock(v){
+  if (!v) return '';
+  let rows = CHECKS.map(([key,label,map]) => {
+    const value = v[key];
+    if (value == null) return '';
+    const extra = key === 'binding' ? v.binding_detail
+                : key === 'chain'   ? v.chain_detail : '';
+    return row(map[value] || 'skip', label, value, extra);
+  }).join('');
+
+  if (v.expired) rows += row('warn','Validity','expired',
+                             'the signing certificate is past its validity period');
+  if ((v.profile_problems || []).length)
+    rows += row('fail','Cert profile','non-conforming', v.profile_problems.join('; '));
+  const rev = v.revocation;
+  if (rev) rows += row(rev.state === 'revoked' ? 'fail'
+                     : rev.state === 'good' ? (rev.signature_verified ? 'pass':'warn') : 'skip',
+                     'Revocation', rev.state, rev.detail);
+
+  const signer = (v.chain_subjects || [])[0] || 'unknown signer';
+  return `<div class="verify">
+    <div class="verify-h"><span>C2PA verification · signed by <b>${esc(signer)}</b></span>
+      <span class="alg">${esc(v.algorithm||'')}${v.crypto_backend ? ' · '+esc(v.crypto_backend) : ''}</span>
+    </div>${rows}</div>`;
+}
+
+const PROSE = ['decoded','payload','prompt','raw','value','note','caveat',
+               'binding_detail','signature_detail','chain_detail','verify_via'];
+
+function evidenceBlock(ev){
+  if (!ev || !Object.keys(ev).length) return '';
+  let html = verifyBlock(ev.verification);
+  const pairs = Object.entries(ev).filter(([k,val]) =>
+    k !== 'verification' && val != null && val !== '' && typeof val !== 'object');
+  if (pairs.length){
+    html += '<dl class="kv">' + pairs.slice(0,12).map(([k,val]) => {
+      const s = String(val);
+      const long = s.length > 90 || (PROSE.includes(k) && s.length > 50);
+      return long ? `<dt>${esc(k)}</dt><dd><div class="payload">${esc(s)}</div></dd>`
+                  : `<dt>${esc(k)}</dt><dd>${esc(s)}</dd>`;
+    }).join('') + '</dl>';
+  }
+  html += `<details class="raw"><summary>raw evidence</summary>
+           <pre>${esc(JSON.stringify(ev, null, 2))}</pre></details>`;
+  return html;
+}
+
+/* ---------- render --------------------------------------------------- */
+function render(){
+  const any = reports.length > 0;
+  summary.style.display = toolbar.style.display = results.style.display = any ? 'block' : 'none';
+  if (!any) return;
+
+  const counts = {};
+  reports.forEach(r => counts[r.verdict] = (counts[r.verdict] || 0) + 1);
+  const attention = reports.filter(r => ATTENTION.has(r.verdict)).length;
+
+  summary.innerHTML =
+    `<div class="headline">
+       <span class="big">${attention || 'No'}</span>
+       <span class="cap">${attention === 1 ? 'file needs attention' : 'files need attention'}
+         · ${reports.length} scanned</span>
+     </div>
+     <div class="chips">` +
+    ORDER.filter(v => counts[v]).map(v =>
+      `<span class="chip ${kclass(v)} ${active.has(v)?'on':''}" data-v="${esc(v)}">
+         <span class="dot"></span><span class="n">${counts[v]}</span> ${esc(v)}</span>`).join('') +
+    (active.size ? `<span class="chip" data-v="">Clear filter</span>` : '') + '</div>';
+
+  summary.querySelectorAll('.chip').forEach(chip => chip.onclick = () => {
+    const v = chip.dataset.v;
+    if (!v) active.clear();
+    else active.has(v) ? active.delete(v) : active.add(v);
+    render();
+  });
+
+  reports.sort((a,b) => ORDER.indexOf(a.verdict) - ORDER.indexOf(b.verdict)
+                     || String(a.name).localeCompare(String(b.name)));
+
+  results.innerHTML = '<div class="rows">' + reports.map((r,i) => {
+    const findings = (r.findings || []).map(f => `
+      <div class="finding ${String(f.signal).startsWith('integrity.') ? 'integrity' : ''}">
+        <div class="fh"><span class="tier t-${esc(f.tier)}">${esc(f.tier)}</span>
+          <span class="fsig">${esc(f.signal)}</span></div>
+        <div class="fsum">${esc(f.summary)}</div>
+        ${evidenceBlock(f.evidence)}
+      </div>`).join('') ||
+      '<div class="empty" style="padding:14px">No findings — nothing to show.</div>';
+
+    const hay = (r.name + ' ' + (r.source || '') + ' ' +
+                 (r.findings || []).map(f => f.signal).join(' ')).toLowerCase();
+
+    return `<div class="file" id="f${i}" data-verdict="${esc(r.verdict)}" data-hay="${esc(hay)}">
+      <div class="fhead" onclick="document.getElementById('f${i}').classList.toggle('open')">
+        <span class="caret">${icon('chev',13)}</span>
+        <span class="fmain">
+          <span class="name">${esc(r.name)}</span>
+          <span class="sub">${r.source ? `<span class="who">${esc(r.source)}</span>` : ''}</span>
+        </span>
+        <span class="meta">${esc(r.format)} · ${bytes(r.size)}</span>
+        ${r.tier ? `<span class="tier t-${esc(r.tier)}">${esc(r.tier)}</span>` : ''}
+        <span class="badge ${kclass(r.verdict)}">${esc(r.verdict)}</span>
+      </div>
+      ${r.basis ? `<div class="basis">${esc(r.basis)}</div>` : ''}
+      ${cleanControls(r, i)}
+      <div class="clean-out" id="clean-${i}"></div>
+      <div class="evidence">${findings}
+        ${(r.errors||[]).map(e => `<div class="fsig">! ${esc(e)}</div>`).join('')}</div>
+    </div>`;
+  }).join('') + '</div>';
+
+  if (expanded) document.querySelectorAll('.file').forEach(f => f.classList.add('open'));
+  applyFilter();
+}
+
+/* Both scan routes can clean, but not the same way. A dropped file is still in
+   the browser, so it is cleaned in memory and handed back as a download. A
+   path-scanned file was only ever read server-side, so cleaning it means
+   writing to disk — a sibling `.clean` copy unless "replace the original" is
+   ticked. Same button, honest about which one it is. */
+/* C2PA is only removable when provenance is explicitly opted into, so a file
+   whose only marker is a manifest is NOT a target unless that box is ticked —
+   otherwise the bulk button offers to clean files it will not change. */
+const REMOVABLE = /^(unicode\.|whitespace\.|meta\.|png\.|doc\.)/;
+const PROVENANCE = /^(c2pa\.|capture\.signed)/;
+/* A CBOR: tag means the field was read out of the manifest itself — a generator
+   name in there comes off with the manifest or not at all. */
+const inManifest = f => /^CBOR:/.test((f.evidence || {}).tag || '');
+/* Formats with no safe rewriter. Counting them as targets means the button
+   promises a clean that can never happen, and they stay in the count no matter
+   how many times you run it. */
+const NO_REWRITER = /pdf/i;
+const removable = (r, prov) => !NO_REWRITER.test(r.format || '') &&
+  (r.findings || []).some(f =>
+    prov ? (REMOVABLE.test(f.signal) || PROVENANCE.test(f.signal))
+         : (REMOVABLE.test(f.signal) && !inManifest(f)));
+
+function cleanControls(r, i){
+  /* Per file the provenance checkbox sits right next to the button, so offer it
+     whenever anything at all could come off. */
+  if (!removable(r, true)) return '';
+  const onDisk = !uploaded.has(r.name) && r.path;
+  return `<div class="row" style="margin:0 18px 12px 42px;flex-wrap:wrap;gap:10px">
+      <button class="ghost clean-btn" onclick="cleanFile(${i})">${
+        onDisk ? 'Remove markers' : 'Remove markers &amp; download'}</button>
+      <label class="opts" style="margin:0"><input type="checkbox" id="prov-${i}">
+        also remove C2PA provenance</label>
+      ${onDisk ? `<label class="opts" style="margin:0"><input type="checkbox" id="repl-${i}">
+        replace the original file</label>
+      <span style="font-size:12px;color:var(--faint);flex-basis:100%">
+        Writes <code>${esc(cleanName(r.path))}</code> next to the original unless you
+        tick replace.</span>` : ''}
+    </div>`;
+}
+
+const cleanName = p => (p || '').replace(/(\.[^./]+)?$/, m => '.clean' + (m || ''));
+
+/* opts lets "Cleanse all" drive the same code path as the per-file button, so
+   there is only ever one implementation of what cleaning means. */
+async function cleanFile(i, opts){
+  const r = reports[i];
+  const file = uploaded.get(r.name);
+  const out = document.getElementById('clean-' + i);
+  const cats = opts?.cats || ['hidden','privacy','generator'];
+  if (!opts && document.getElementById('prov-' + i)?.checked) cats.push('provenance');
+
+  document.getElementById('f' + i)?.classList.add('open');
+  out.className = 'clean-out on';
+  out.innerHTML = '<h4>Cleansing…</h4>';
+  let res;
+  try{
+    res = file
+      ? await (await fetch('/api/sanitize', {method:'POST',
+          headers:{'X-Filename': encodeURIComponent(file.name).replace(/%20/g,' '),
+                   'X-Categories': cats.join(',')}, body:file})).json()
+      : await (await fetch('/api/sanitize-path', {method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({path: r.path, categories: cats,
+            replace: opts ? !!opts.replace
+                          : !!document.getElementById('repl-' + i)?.checked})})).json();
+  } catch { out.innerHTML = '<h4>Cleansing failed</h4>'; return {error:'request failed'}; }
+
+  if (res.error){ out.innerHTML = `<h4>Cleansing failed</h4><div>${esc(res.error)}</div>`; return res; }
+
+  /* "Nothing to remove" and "there is a marker here that stripping cannot
+     reach" are completely different answers. Say which one this is. */
+  const left = res.remaining || [];
+  const remainBlock = left.length
+    ? `<h4 style="margin-top:12px">Still detectable</h4>` + left.map(x =>
+        `<div class="kept"><span class="dot2">!</span><span>${esc(x.summary)}</span></div>`).join('') +
+      `<div class="warn-box">These are not metadata. Stripping chunks and headers cannot
+        reach a payload embedded in the pixels, or a writing style — see the Docs tab for
+        what is and is not removable.</div>`
+    : `<div class="kept" style="color:var(--ok)"><span class="dot2" style="color:var(--ok)">✓</span>
+       <span>Re-scan of the cleaned bytes found no markers.</span></div>`;
+  const warnBlock = (res.warnings||[]).map(w => `<div class="warn-box">${esc(w)}</div>`).join('');
+
+  if (!res.changed){
+    out.innerHTML = `<h4>Nothing could be removed</h4>
+      <div style="font-size:13px;color:var(--ink-2)">${
+        esc(res.unsupported || 'No markers in the selected categories.')}</div>`
+      + remainBlock + warnBlock;
+    return res;
+  }
+
+  const done = `<h4>Removed — ${res.bytes_removed.toLocaleString()} bytes</h4>` +
+    res.actions.filter(a => a.category !== 'info').map(a =>
+      `<div class="rm"><span class="minus">−</span><span>[${esc(a.category)}] ${esc(a.detail)}</span></div>`).join('') +
+    remainBlock + warnBlock;
+
+  if (res.written){
+    out.innerHTML = done + `<div class="kept" style="margin-top:12px">
+      <span class="dot2" style="color:var(--ok)">✓</span>
+      <span>${res.replaced ? 'Original replaced' : 'Written'}:
+        <code>${esc(res.written)}</code></span></div>`;
+    return res;
+  }
+
+  const url = URL.createObjectURL(new Blob([Uint8Array.from(atob(res.data), c => c.charCodeAt(0))]));
+  const stem = file.name.replace(/(\.[^.]+)$/, '');
+  const ext = (file.name.match(/(\.[^.]+)$/) || [''])[0];
+  out.innerHTML = done + `<div class="row" style="margin-top:12px">
+       <a href="${url}" download="${esc(stem)}.clean${esc(ext)}"
+          style="text-decoration:none"><button>Download cleaned file</button></a>
+     </div>`;
+  return res;
+}
+
+function applyFilter(){
+  const q = $('filter').value.trim().toLowerCase();
+  let shown = 0;
+  document.querySelectorAll('.file').forEach(el => {
+    const show = (!active.size || active.has(el.dataset.verdict))
+              && (!q || el.dataset.hay.includes(q));
+    el.classList.toggle('hide', !show);
+    if (show) shown++;
+  });
+  const old = results.querySelector('.rows > .empty');
+  if (old) old.remove();
+  if (!shown) results.querySelector('.rows')
+    .insertAdjacentHTML('beforeend', '<div class="empty">Nothing matches that filter.</div>');
+  syncCleanAll();   // the bulk button only ever offers what is on screen
+}
+
+/* ===================================================================
+   Views
+   =================================================================== */
+const VIEWS = ['scan', 'text', 'docs'];
+document.querySelectorAll('.tab').forEach(tab => tab.onclick = () => {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t === tab));
+  const want = tab.dataset.view;
+  VIEWS.forEach(v => { document.getElementById('view-' + v).hidden = v !== want; });
+  if (want === 'docs' && !catalogue.loaded) loadCatalogue();
+  window.scrollTo({top:0, behavior:'smooth'});
+});
+
+/* ===================================================================
+   Text page
+   =================================================================== */
+const ta = $('ta'), textOut = $('textOut'), tbar = $('tbar');
+
+ta.oninput = () => {
+  const w = ta.value.trim() ? ta.value.trim().split(/\s+/).length : 0;
+  $('taCount').textContent = w ? `${w} words` : '';
+};
+
+/* Rebuild the text with matched ranges wrapped, front to back so escaping
+   happens exactly once per character. */
+function highlight(text, spans){
+  const parts = [];
+  let at = 0;
+  for (const sp of [...spans].sort((a,b) => a.start - b.start)){
+    if (sp.start < at) continue;
+    parts.push(esc(text.slice(at, sp.start)));
+    parts.push(`<mark class="${esc(sp.kind)}" title="${esc(sp.label)}">` +
+               esc(text.slice(sp.start, sp.end)) + '</mark>');
+    at = sp.end;
+  }
+  parts.push(esc(text.slice(at)));
+  return parts.join('');
+}
+
+async function analyseText(){
+  const text = ta.value;
+  if (!text.trim()) return;
+  tbar.classList.add('on');
+  try {
+    const res = await fetch('/api/scan-text', {method:'POST', body: text});
+    renderText(await res.json(), text);
+  } finally { tbar.classList.remove('on'); }
+}
+
+function renderText(d, text){
+  if (!d) return;
+  if (d.error){ textOut.innerHTML = `<div class="panel panel-pad">${esc(d.error)}</div>`; return; }
+  const st = d.style || {};
+  const hidden = (d.findings || []).filter(f => /^(unicode\.|whitespace\.)/.test(f.signal));
+  const short = !st.enough_words;
+
+  /* Evidence first. A hidden payload is a fact about the bytes; the style score
+     is an opinion about the prose, and blurring the two is the whole problem
+     with detectors like this. */
+  const evidence = hidden.length
+    ? `<div class="panel" style="margin-top:16px">
+         <div class="headline"><h2 style="margin:0;font-size:17px">Hidden characters found</h2>
+           <span class="badge k-gen">EVIDENCE</span></div>
+         ${hidden.map(f => `<div class="feat"><span>${esc(f.summary)}</span>
+            <span>${esc(f.signal)}</span></div>`).join('')}
+         <div class="notprob" style="margin-top:14px">This part is not a guess. These
+           characters are physically present in the text you pasted, and they do not
+           get there by accident. <b>Cleanse it</b> strips them.</div>
+       </div>`
+    : `<div class="panel panel-pad" style="margin-top:16px">
+         <b>No hidden characters.</b> <span style="color:var(--muted)">No invisible
+         payload, zero-width encoding or whitespace pattern in this text.</span></div>`;
+
+  const pct = Math.round(st.score || 0);
+  const band = st.band || 'none';
+  const gauge = `<div class="panel" style="margin-top:16px">
+      <div class="gauge band-${esc(band)}">
+        <div class="dial" style="--v:${pct}"><b>${pct}<i>/100</i></b></div>
+        <div class="gauge-say">
+          <h3>${esc(band.replace(/^./, c => c.toUpperCase()))} LLM-style signal${
+            st.family ? ` &middot; reads like ${esc(st.family)}` : ''}</h3>
+          <p>${esc(st.band_note || '')}</p>
+          ${short ? `<p style="margin-top:6px;color:var(--susp)">Only ${st.words} words &mdash;
+             under the ${st.min_words}-word floor, so treat this score as noise.</p>` : ''}
+        </div>
+      </div>
+      <div class="notprob"><b>A style score, not a probability.</b>
+        Nobody can compute "87% AI" from prose, and tools that print one are inventing it.
+        Measured on this engine's benchmark: it catches about
+        ${Math.round((st.measured_tpr || 0) * 100)}% of AI-written text while wrongly
+        flagging about ${((st.measured_fpr || 0) * 100).toFixed(1)}% of human writing.
+        A high score is worth a second look. A low score proves nothing &mdash; one
+        editing pass removes the signal while the text stays machine-written.</div>
+      ${(st.hits || []).map(h =>
+        `<div class="feat"><span>${esc(h[0])}</span><span>&times;${h[1]} &middot; +${h[2]}</span></div>`).join('')}
+      ${st.em_dash_per_1000 != null ? `<div class="feat"><span>em dashes per 1000 words</span>
+         <span>${st.em_dash_per_1000}</span></div>` : ''}
+      ${st.burstiness != null ? `<div class="feat"><span>sentence-length variation (CV)</span>
+         <span>${st.burstiness}</span></div>` : ''}
+    </div>`;
+
+  const marked = (d.spans || []).length
+    ? `<div class="panel" style="margin-top:16px">
+         <div class="headline"><h2 style="margin:0;font-size:17px">What was matched</h2>
+           <span style="color:var(--muted);font-size:13px">hover a highlight for the rule</span></div>
+         <div class="marked">${highlight(text, d.spans)}</div>
+       </div>`
+    : '';
+
+  textOut.innerHTML = `<div class="panel panel-pad" style="margin-top:16px">
+      <div class="row"><span class="badge ${kclass(d.verdict)}">${esc(d.verdict)}</span>
+        <span style="color:var(--muted);font-size:13.5px">${esc(d.basis || '')}</span></div>
+    </div>` + evidence + gauge + marked;
+}
+
+async function cleanText(){
+  const text = ta.value;
+  if (!text.trim()) return;
+  tbar.classList.add('on');
+  try {
+    const res = await fetch('/api/clean-text', {method:'POST',
+      headers:{'X-Categories': 'hidden,privacy,generator'}, body: text});
+    const d = await res.json();
+    if (d.error){ alert(d.error); return; }
+    if (!d.changed){
+      textOut.insertAdjacentHTML('afterbegin',
+        `<div class="panel panel-pad" style="margin-top:16px"><b>Nothing to clean.</b>
+         <span style="color:var(--muted)">No hidden characters or suspicious whitespace.
+         Wording is never rewritten &mdash; see the style score for that.</span></div>`);
+      return;
+    }
+    ta.value = d.text;
+    ta.oninput();
+    renderText(d.remaining, d.text);
+    textOut.insertAdjacentHTML('afterbegin',
+      `<div class="panel panel-pad" style="margin-top:16px">
+         <b>Cleansed &mdash; ${d.bytes_removed} bytes removed.</b>
+         ${(d.actions || []).filter(a => a.category !== 'info').map(a =>
+           `<div class="rm"><span class="minus">&minus;</span><span>${esc(a.detail)}</span></div>`).join('')}
+         <div class="notprob" style="margin:12px 0 0">The box above now holds the cleaned
+           text &mdash; copy it straight out. Wording is untouched, so the style score
+           barely moves. That is honest, not a failure.</div>
+       </div>`);
+  } finally { tbar.classList.remove('on'); }
+}
+
+$('scanText').onclick = analyseText;
+$('cleanText').onclick = cleanText;
+
+/* ===================================================================
+   Docs: runnable examples
+   =================================================================== */
+const catalogue = {loaded:false, data:null, ran:0};
+let kindFilter = 'all';
+
+const KIND_LABEL = {all:'Everything', image:'Pictures', document:'Documents',
+                    text:'Text', code:'Code', video:'Video', other:'Other'};
+
+const TIERS = [
+  ['A','Embedded generation record — a <em>verified</em> C2PA manifest, PNG generation '+
+       'parameters, IPTC <code>digitalSourceType</code>, or a decoded hidden payload. '+
+       'Treat as proof.'],
+  ['B','Self-declared metadata naming a generator, or verbatim chat-assistant phrasing. '+
+       'Almost always true; trivially stripped or forged.'],
+  ['U','A watermark is indicated but is verifiable only by the vendor — Google SynthID, '+
+       'the Claude and Gemini text watermarks, Meta. Origin indicated, watermark unchecked.'],
+  ['C','Heuristic only — output dimensions, prose stylometry, unusual whitespace. '+
+       'Suggestive. Never report alone as proof.'],
+];
+
+/* Blurbs come from the same catalogue that writes DETECTION.md and use a little
+   markdown; render it after escaping so the text stays inert. */
+const md = t => esc(t).replace(/`([^`]+)`/g, '<code>$1</code>')
+                      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+
+function renderTiers(){
+  const list = document.getElementById('tierlist');
+  list.innerHTML =
+    `<div class="tierrow"><span class="badge k-PROVENANCE-FORGED">PROVENANCE-FORGED</span>
+       <span>A signed manifest that does not describe this file — transplanted, edited
+       after signing, or forged. This outranks everything else.</span></div>` +
+    TIERS.map(([t, text]) =>
+      `<div class="tierrow"><span class="tier t-${t}">${t}</span><span>${text}</span></div>`)
+      .join('');
+}
+
+async function loadCatalogue(){
+  renderTiers();
+  const host = document.getElementById('catalogue');
+  host.innerHTML = '<div class="empty">Loading examples…</div>';
+  let data;
+  try { data = await (await fetch('/api/samples')).json(); }
+  catch { host.innerHTML = '<div class="empty">Could not load the catalogue.</div>'; return; }
+
+  if (!data.samples || !data.samples.length){
+    host.innerHTML = `<div class="empty">${esc(data.error ||
+      'No examples found. Run python3 tools/build_samples.py')}</div>`;
+    return;
+  }
+  catalogue.loaded = true; catalogue.data = data;
+
+  host.innerHTML = data.categories.map(cat => {
+    const items = data.samples.filter(s => s.category === cat);
+    if (!items.length) return '';
+    return `<section class="cat">
+      <div class="cat-h"><h2>${esc(cat)}</h2><span>${items.length} example${
+        items.length > 1 ? 's' : ''}</span>
+        <button class="ghost run-cat" data-cat="${esc(cat)}">Run these</button></div>
+      <div class="samples">` + items.map(s => `
+        <article class="ds" id="ds-${cssid(s.file)}" data-kind="${esc(s.kind || 'other')}"
+                 data-hay="${esc((s.file + ' ' + s.blurb + ' ' +
+                   (s.signals||[]).join(' ') + ' ' + s.category).toLowerCase())}">
+          <div class="ds-head">
+            <span class="ds-name">${esc(s.file)}</span>
+            <span class="badge ${kclass(s.expected_verdict)}">${esc(s.expected_verdict)}</span>
+            ${s.expected_tier !== '—' ? `<span class="tier t-${esc(s.expected_tier)}">${
+              esc(s.expected_tier)}</span>` : ''}
+            <button class="ghost run-one" data-file="${esc(s.file)}">Run</button>
+          </div>
+          <div class="ds-body">${md(s.blurb)}
+            <div class="ds-sig">${(s.signals||[]).map(x => `<code>${esc(x)}</code>`).join('')}</div>
+          </div>
+          <div class="ds-out"></div>
+        </article>`).join('') + '</div></section>';
+  }).join('');
+
+  renderKinds();
+  host.querySelectorAll('.run-one').forEach(b =>
+    b.onclick = () => runSample(b.dataset.file, b));
+  host.querySelectorAll('.run-cat').forEach(b => b.onclick = async () => {
+    const items = data.samples.filter(s => s.category === b.dataset.cat);
+    for (const s of items) await runSample(s.file);
+  });
+}
+
+const cssid = name => name.replace(/[^a-z0-9]/gi, '_');
+
+/* Media-type chips. Counts come from the catalogue so a new sample type shows
+   up here without touching the UI. */
+function renderKinds(){
+  const host = document.getElementById('kinds');
+  const counts = {};
+  catalogue.data.samples.forEach(s => counts[s.kind] = (counts[s.kind] || 0) + 1);
+  const kinds = ['all', ...Object.keys(KIND_LABEL).filter(k => k !== 'all' && counts[k])];
+  host.innerHTML = kinds.map(k =>
+    `<span class="kind ${kindFilter === k ? 'on' : ''}" data-kind="${k}">
+       ${esc(KIND_LABEL[k] || k)}
+       <span class="n">${k === 'all' ? catalogue.data.samples.length : counts[k]}</span>
+     </span>`).join('');
+  host.querySelectorAll('.kind').forEach(el => el.onclick = () => {
+    kindFilter = el.dataset.kind;
+    renderKinds();
+    applyDocFilter();
+  });
+}
+
+function applyDocFilter(){
+  const q = (document.getElementById('docFilter').value || '').trim().toLowerCase();
+  let shown = 0;
+  document.querySelectorAll('.ds').forEach(card => {
+    const show = (kindFilter === 'all' || card.dataset.kind === kindFilter)
+              && (!q || card.dataset.hay.includes(q));
+    card.classList.toggle('hide', !show);
+    if (show) shown++;
+  });
+  // Hide a category heading once everything under it is filtered out.
+  document.querySelectorAll('.cat').forEach(sec => {
+    const any = [...sec.querySelectorAll('.ds')].some(c => !c.classList.contains('hide'));
+    sec.classList.toggle('hide', !any);
+  });
+  const stat = document.getElementById('runStat');
+  stat.textContent = shown
+    ? `${shown} example${shown === 1 ? '' : 's'} shown` +
+      (catalogue.ran ? ` · ${catalogue.ran} run` : '')
+    : 'Nothing matches that filter.';
+}
+
+async function runSample(file, button){
+  const card = document.getElementById('ds-' + cssid(file));
+  const out = card.querySelector('.ds-out');
+  if (button) button.innerHTML = '<span class="spin"></span>Running';
+  out.innerHTML = '';
+  card.classList.add('ran');
+
+  let r;
+  try{
+    const res = await fetch('/api/scan-sample', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:file})});
+    r = await res.json();
+  } catch { r = {error:'request failed'}; }
+  if (button) button.textContent = 'Run again';
+
+  if (r.error){ out.innerHTML = `<div class="fsum">${esc(r.error)}</div>`; return; }
+
+  const expected = (catalogue.data.samples.find(s => s.file === file) || {}).expected_verdict;
+  const agrees = expected === r.verdict;
+  catalogue.ran++;
+  applyDocFilter();
+
+  out.innerHTML =
+    `<div class="ds-verdict">
+       <span class="badge ${kclass(r.verdict)}">${esc(r.verdict)}</span>
+       ${r.source ? `<span class="who" style="font-size:12.5px">${esc(r.source)}</span>` : ''}
+       <span class="${agrees ? 'ok-note' : 'bad-note'}">${agrees
+         ? 'matches the documented result'
+         : 'differs from the documented result (' + esc(expected) + ')'}</span>
+     </div>` +
+    (r.findings || []).map(f => `
+      <div class="finding ${String(f.signal).startsWith('integrity.') ? 'integrity' : ''}">
+        <div class="fh"><span class="tier t-${esc(f.tier)}">${esc(f.tier)}</span>
+          <span class="fsig">${esc(f.signal)}</span></div>
+        <div class="fsum">${esc(f.summary)}</div>
+        ${evidenceBlock(f.evidence)}
+      </div>`).join('') ||
+    '<div class="fsum" style="color:var(--muted)">No findings — this is a clean control.</div>';
+}
+
+document.getElementById('runAll').onclick = async () => {
+  if (!catalogue.loaded) await loadCatalogue();
+  const visible = [...document.querySelectorAll('.ds')]
+    .filter(c => !c.classList.contains('hide'))
+    .map(c => c.querySelector('.run-one')?.dataset.file)
+    .filter(Boolean);
+  for (const file of visible) await runSample(file);
+};
+document.getElementById('docFilter').oninput = applyDocFilter;
+document.getElementById('resetDocs').onclick = () => {
+  catalogue.ran = 0;
+  document.querySelectorAll('.ds').forEach(d => {
+    d.classList.remove('ran');
+    d.querySelector('.ds-out').innerHTML = '';
+    const b = d.querySelector('.run-one'); if (b) b.textContent = 'Run';
+  });
+  applyDocFilter();
+};
+
+/* ===================================================================
+   Theme
+   =================================================================== */
+/* Three states rather than two: "system" has to stay reachable, because a
+   laptop that flips to dark in the evening should keep working that way unless
+   the choice was made deliberately. */
+const THEMES = ['system', 'light', 'dark'];
+const THEME_ICON = {system: 'auto', light: 'sun', dark: 'moon'};
+
+function applyTheme(mode){
+  if (mode === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', mode);
+  const btn = $('theme');
+  btn.innerHTML = `<svg width="15" height="15"><use href="#i-${THEME_ICON[mode]}"/></svg>`;
+  btn.title = `Theme: ${mode} (click to change)`;
+  try { localStorage.setItem('markcleanse-theme', mode); } catch {}
+}
+
+let themeMode = 'system';
+try { themeMode = localStorage.getItem('markcleanse-theme') || 'system'; } catch {}
+if (!THEMES.includes(themeMode)) themeMode = 'system';
+applyTheme(themeMode);
+
+$('theme').onclick = () => {
+  themeMode = THEMES[(THEMES.indexOf(themeMode) + 1) % THEMES.length];
+  applyTheme(themeMode);
+};
+
+let envInfo = {};
+fetch('/api/info').then(r => r.json()).then(d => {
+  envInfo = d;
+  /* The directory is in the chip, not just a tooltip: with two copies of the
+     project on one machine, "which install am I looking at" is the first
+     question worth answering. */
+  const root = d.root || '';
+  $('env').textContent = `v${d.version} · ui ${d.ui_build || '?'} · ` +
+                         `exiftool ${d.exiftool ? 'on' : 'off'}` +
+                         (root ? ` · ${root.split('/').pop()}` : '');
+  $('env').title = root ? `serving from ${root}` : '';
+}).catch(() => $('env').remove());
+</script>
+</body>
+</html>
