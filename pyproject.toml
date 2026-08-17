@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "markcleanse"
+version = "0.1.0"
+description = "AI provenance and watermark forensics for images and documents"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# Zero required dependencies. This is deliberate: the tool has to run on a
+# locked-down machine, in CI, or on a client's laptop without a pip install.
+dependencies = []
+
+[project.optional-dependencies]
+# pypdf improves PDF text extraction (better layout handling than the built-in
+# content-stream parser). Everything still works without it.
+pdf = ["pypdf>=4.0"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+markcleanse = "markcleanse.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["markcleanse*"]

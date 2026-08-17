@@ -1,0 +1,13 @@
+# Fetched trust lists — see tools/update-trust-list.sh.
+# Not vendored: a stale trust list keeps a revoked CA trusted.
+trust/
+__pycache__/
+*.pyc
+tests/fixtures/
+markcleanse.png
+
+# Tool output and working files
+markcleanse-report.html
+*.markcleanse-backup*
+*.markcleanse-tmp*
+.playwright-mcp/
